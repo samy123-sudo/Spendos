@@ -8,7 +8,7 @@ import { PERIOD_OPTIONS, money, round, today } from "../utils";
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
 const WIPE_PHRASE = "DELETE ALL SPENDOS DATA";
 
-export default function SettingsPage({ state, refresh, saveSettings, notify, goTo }: PageProps) {
+export default function SettingsPage({ state, refresh, saveSettings, notify, goTo, onLock }: PageProps) {
   const settings = state.settings;
   const currency = settings.currency || "INR";
 
@@ -21,6 +21,16 @@ export default function SettingsPage({ state, refresh, saveSettings, notify, goT
   const [householdName, setHouseholdName] = useState(settings.household?.name || "Our household");
   const [wipeText, setWipeText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [locking, setLocking] = useState(false);
+
+  const lock = async () => {
+    setLocking(true);
+    try {
+      await onLock();
+    } finally {
+      setLocking(false);
+    }
+  };
 
   useEffect(() => {
     setAssets(String(settings.assets ?? 0));
@@ -212,7 +222,8 @@ export default function SettingsPage({ state, refresh, saveSettings, notify, goT
               ))
             ) : (
               <p className="card-note" style={{ marginBottom: 10 }}>
-                No members listed yet. Add who shares this ledger; access itself is controlled by this Site's link.
+                No members listed yet. Add who shares this ledger; opening it needs the household passphrase, not a
+                separate invite per person.
               </p>
             )}
 
@@ -247,8 +258,8 @@ export default function SettingsPage({ state, refresh, saveSettings, notify, goT
               Share this Site link so a partner or advisor sees the same household figures:{" "}
               <strong style={{ wordBreak: "break-all" }}>{shareUrl}</strong>
               <br />
-              Spendos has no per-person logins — anyone with this Site's link opens the same ledger, so only share it with
-              people you trust.
+              Spendos has no per-person logins — everyone who knows the household passphrase opens the same ledger, so
+              only share it with people you trust.
             </div>
           </Card>
 
@@ -510,6 +521,18 @@ export default function SettingsPage({ state, refresh, saveSettings, notify, goT
               A fresh start was last requested{" "}
               {settings.driveResetAt ? new Date(settings.driveResetAt).toLocaleString("en-IN") : "never"}.
             </p>
+          </Card>
+
+          <Card>
+            <CardHead title="Security" note="This browser only" />
+            <p className="card-note" style={{ marginBottom: 12 }}>
+              This browser stays unlocked for 30 days. Lock the ledger before handing the phone or laptop to someone
+              else — you will need the household passphrase to open it again. Opening a new browser asks for the
+              passphrase too.
+            </p>
+            <button className="btn" onClick={() => void lock()} disabled={locking}>
+              {locking ? "Locking…" : "Lock ledger"}
+            </button>
           </Card>
 
           <Card>

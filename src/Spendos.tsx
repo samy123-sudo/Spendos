@@ -70,6 +70,19 @@ export default function App() {
     void refresh();
   }, [refresh]);
 
+  /* Only report a successful lock: if the request fails the session is still live
+     on the server, so pretending to be locked would be misleading. */
+  const lockLedger = useCallback(async () => {
+    try {
+      await signOut();
+    } catch (cause) {
+      notify(cause instanceof Error ? cause.message : "Could not lock the ledger.", true);
+      return;
+    }
+    setState(null);
+    setLocked(true);
+  }, [notify]);
+
   useEffect(() => {
     const onHash = () => setTab(readTab());
     window.addEventListener("hashchange", onHash);
@@ -141,16 +154,18 @@ export default function App() {
   const current = NAV.find((item) => item.key === tab) || NAV[0];
   const reviewCount = state.transactions.filter((tx) => tx.needsReview).length;
 
+  const pageProps = { state, refresh, saveSettings, notify, goTo, onLock: lockLedger };
+
   const pages: Record<TabKey, ReactNode> = {
-    dashboard: <Dashboard state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    transactions: <Transactions state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    budgets: <Budgets state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    recurring: <Recurring state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    calendar: <CalendarPage state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    debts: <Debts state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    documents: <Documents state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    insights: <Insights state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
-    settings: <SettingsPage state={state} refresh={refresh} saveSettings={saveSettings} notify={notify} goTo={goTo} />,
+    dashboard: <Dashboard {...pageProps} />,
+    transactions: <Transactions {...pageProps} />,
+    budgets: <Budgets {...pageProps} />,
+    recurring: <Recurring {...pageProps} />,
+    calendar: <CalendarPage {...pageProps} />,
+    debts: <Debts {...pageProps} />,
+    documents: <Documents {...pageProps} />,
+    insights: <Insights {...pageProps} />,
+    settings: <SettingsPage {...pageProps} />,
   };
 
   return (
@@ -185,18 +200,7 @@ export default function App() {
           {state.settings.currency} · shared via this Site link
           <br />
           {state.documents.length} document{state.documents.length === 1 ? "" : "s"} stored
-          <button
-            className="btn small"
-            style={{ marginTop: 10 }}
-            onClick={async () => {
-              try {
-                await signOut();
-              } finally {
-                setState(null);
-                setLocked(true);
-              }
-            }}
-          >
+          <button className="btn small" style={{ marginTop: 10 }} onClick={() => void lockLedger()}>
             Lock ledger
           </button>
         </div>

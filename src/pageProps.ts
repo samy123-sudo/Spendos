@@ -9,4 +9,5 @@ export interface PageProps {
   saveSettings: (patch: Record<string, unknown>) => Promise<Settings | void>;
   notify: Notify;
   goTo: GoTo;
+  onLock: () => Promise<void>;
 }

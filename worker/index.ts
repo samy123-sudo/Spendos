@@ -1343,12 +1343,6 @@ app.delete("/api/state", async (c) => {
 
 /* ---------------------------------------------------------------- sessions */
 
-app.get("/api/session", async (c) => {
-  const passphrase = c.env.SPENDOS_PASSPHRASE || "";
-  if (!passphrase) return c.json({ ok: false, configured: false, authenticated: false, error: AUTH_NOT_CONFIGURED });
-  return c.json({ ok: true, configured: true, authenticated: await hasValidSession(c.req.raw, passphrase) });
-});
-
 app.post("/api/session", async (c) => {
   const passphrase = c.env.SPENDOS_PASSPHRASE || "";
   if (!passphrase) throw new HttpError(503, AUTH_NOT_CONFIGURED);

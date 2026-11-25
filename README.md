@@ -105,7 +105,6 @@ npx wrangler dev --port 8787 --local --persist-to /tmp/spendos-d1
 | Method   | Path                     | Purpose                                       |
 | -------- | ------------------------ | --------------------------------------------- |
 | `GET`    | `/api/health`            | liveness check (the only data-free route)      |
-| `GET`    | `/api/session`           | is this browser signed in, and is auth set up  |
 | `POST`   | `/api/session`           | exchange the passphrase for a session cookie   |
 | `DELETE` | `/api/session`           | sign out and clear the cookie                  |
 | `GET`    | `/api/state`             | full snapshot: transactions, docs, settings…   |
@@ -141,7 +140,7 @@ Requests pass through a hardening layer in `worker/index.ts`:
 
 ### Passphrase gate
 
-Every API route except `/api/health` and `/api/session` requires a signed
+Every API route except `/api/health` and the session endpoints requires a signed
 session cookie:
 
 - `POST /api/session` exchanges the household passphrase for an `HttpOnly`,
