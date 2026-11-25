@@ -11,3 +11,8 @@ dist
 spendos-*.png
 sample-invoice.pdf
 too-big.pdf
+
+# Local secrets and generated passphrases
+.dev.vars
+.dev.vars.*
+spendos-passphrase.txt

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { fetchState, savePreferences } from "./api";
+import { fetchState, savePreferences, signOut, UnauthenticatedError } from "./api";
 import { Icon } from "./components/Icon";
+import LockScreen from "./components/LockScreen";
 import type { AppState } from "./types";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
@@ -37,6 +38,7 @@ export default function App() {
   const [state, setState] = useState<AppState | null>(null);
   const [tab, setTab] = useState<TabKey>(readTab);
   const [loading, setLoading] = useState(true);
+  const [locked, setLocked] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
@@ -53,7 +55,12 @@ export default function App() {
       setState(next);
       setError("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not load your ledger.");
+      if (cause instanceof UnauthenticatedError) {
+        setLocked(true);
+        setError("");
+      } else {
+        setError(cause instanceof Error ? cause.message : "Could not load your ledger.");
+      }
     } finally {
       setLoading(false);
     }
@@ -98,6 +105,18 @@ export default function App() {
           Loading your ledger…
         </div>
       </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <LockScreen
+        onUnlocked={() => {
+          setLocked(false);
+          setLoading(true);
+          void refresh();
+        }}
+      />
     );
   }
 
@@ -166,6 +185,20 @@ export default function App() {
           {state.settings.currency} · shared via this Site link
           <br />
           {state.documents.length} document{state.documents.length === 1 ? "" : "s"} stored
+          <button
+            className="btn small"
+            style={{ marginTop: 10 }}
+            onClick={async () => {
+              try {
+                await signOut();
+              } finally {
+                setState(null);
+                setLocked(true);
+              }
+            }}
+          >
+            Lock ledger
+          </button>
         </div>
       </aside>
 

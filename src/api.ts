@@ -16,10 +16,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     payload = null;
   }
   if (!response.ok) {
-    throw new Error(payload?.error || `Request failed (${response.status})`);
+    const message = payload?.error || `Request failed (${response.status})`;
+    if (response.status === 401) throw new UnauthenticatedError(message);
+    throw new Error(message);
   }
   return payload as T;
 }
+
+export class UnauthenticatedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnauthenticatedError";
+  }
+}
+
+export const signIn = (passphrase: string) =>
+  request<{ ok: boolean; authenticated: boolean; expiresAt: string }>("/api/session", {
+    method: "POST",
+    body: JSON.stringify({ passphrase }),
+  });
+
+export const signOut = () => request<{ ok: boolean }>("/api/session", { method: "DELETE" });
 
 export const fetchState = () => request<AppState>("/api/state");
 

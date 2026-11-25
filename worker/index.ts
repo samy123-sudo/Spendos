@@ -25,6 +25,7 @@ type Env = {
   DB: D1;
   FILES: R2;
   ASSETS: { fetch: (request: Request) => Promise<Response> };
+  SPENDOS_PASSPHRASE?: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -580,6 +581,74 @@ function clientKey(request: Request) {
   return forwarded.split(",")[0].trim() || "local";
 }
 
+/* ------------------------------------------------------------ authentication */
+
+const SESSION_COOKIE = "spendos_session";
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const SESSION_KEY_LABEL = "spendos-session-v1";
+/* Nothing behind these paths may see data without a session. */
+const PUBLIC_API_PATHS = new Set(["/api/health", "/api/session"]);
+const AUTH_NOT_CONFIGURED =
+  "This ledger has no passphrase yet. Set the SPENDOS_PASSPHRASE secret to open access.";
+
+function base64Url(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function parseCookies(request: Request) {
+  const jar: Record<string, string> = {};
+  const header = request.headers.get("cookie");
+  if (!header) return jar;
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index < 0) continue;
+    const name = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (!name) continue;
+    try {
+      jar[name] = decodeURIComponent(value);
+    } catch {
+      jar[name] = value;
+    }
+  }
+  return jar;
+}
+
+/* The signing key is derived from the passphrase, so rotating the passphrase
+   invalidates every session that is already out there. */
+async function signExpiry(expiry: number, passphrase: string) {
+  const material = new TextEncoder().encode(`${SESSION_KEY_LABEL}:${passphrase}`);
+  const key = await crypto.subtle.importKey("raw", material, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v1.${expiry}`));
+  return base64Url(new Uint8Array(signature));
+}
+
+async function issueSession(passphrase: string) {
+  const expiry = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  return { token: `${expiry}.${await signExpiry(expiry, passphrase)}`, expiry };
+}
+
+async function passphraseMatches(candidate: string, expected: string) {
+  const [left, right] = await Promise.all([signExpiry(0, candidate), signExpiry(0, expected)]);
+  return timingSafeEqual(left, right);
+}
+
+async function hasValidSession(request: Request, passphrase: string) {
+  const token = parseCookies(request)[SESSION_COOKIE];
+  if (!token) return false;
+  const [expiryText, signature] = token.split(".");
+  const expiry = Number(expiryText);
+  if (!signature || !Number.isFinite(expiry) || expiry * 1000 <= Date.now()) return false;
+  return timingSafeEqual(signature, await signExpiry(expiry, passphrase));
+}
+
+function sessionCookie(request: Request, token: string, maxAge: number) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
+}
+
 /* ----------------------------------------------------------- categorization */
 
 function applyRules(tx: { merchant: string; category: string; tags: string[] }, rules: any[]) {
@@ -637,6 +706,15 @@ app.use("/api/*", async (c, next) => {
   const key = clientKey(c.req.raw);
   enforceRateLimit(`${key}:${unsafe ? "write" : "read"}`, unsafe ? 90 : 300, 60_000);
   if (upload) enforceRateLimit(`${key}:upload`, 20, 5 * 60_000);
+
+  /* Fail closed: no passphrase configured means no ledger access, not open access. */
+  if (!PUBLIC_API_PATHS.has(c.req.path)) {
+    const passphrase = c.env.SPENDOS_PASSPHRASE || "";
+    if (!passphrase) throw new HttpError(503, AUTH_NOT_CONFIGURED);
+    if (!(await hasValidSession(c.req.raw, passphrase))) {
+      throw new HttpError(401, "Sign in to continue.");
+    }
+  }
 
   await ensureSchema(c.env.DB);
   await next();
@@ -1261,6 +1339,39 @@ app.delete("/api/state", async (c) => {
     freshStart: true,
     selectedPeriod: "all-time",
   });
+});
+
+/* ---------------------------------------------------------------- sessions */
+
+app.get("/api/session", async (c) => {
+  const passphrase = c.env.SPENDOS_PASSPHRASE || "";
+  if (!passphrase) return c.json({ ok: false, configured: false, authenticated: false, error: AUTH_NOT_CONFIGURED });
+  return c.json({ ok: true, configured: true, authenticated: await hasValidSession(c.req.raw, passphrase) });
+});
+
+app.post("/api/session", async (c) => {
+  const passphrase = c.env.SPENDOS_PASSPHRASE || "";
+  if (!passphrase) throw new HttpError(503, AUTH_NOT_CONFIGURED);
+
+  /* Brute force has to be expensive even for someone who knows the URL. */
+  enforceRateLimit(`${clientKey(c.req.raw)}:login`, 8, 5 * 60_000);
+
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  const candidate = asString(body?.passphrase);
+  if (!candidate) throw new HttpError(400, "Enter your passphrase.");
+  if (candidate.length > 512) throw new HttpError(401, "That passphrase is not correct.");
+  if (!(await passphraseMatches(candidate, passphrase))) {
+    throw new HttpError(401, "That passphrase is not correct.");
+  }
+
+  const { token, expiry } = await issueSession(passphrase);
+  c.header("set-cookie", sessionCookie(c.req.raw, token, SESSION_TTL_SECONDS));
+  return c.json({ ok: true, authenticated: true, expiresAt: new Date(expiry * 1000).toISOString() });
+});
+
+app.delete("/api/session", async (c) => {
+  c.header("set-cookie", sessionCookie(c.req.raw, "", 0));
+  return c.json({ ok: true, authenticated: false });
 });
 
 /* ------------------------------------------------------------------ errors */

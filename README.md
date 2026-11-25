@@ -48,6 +48,13 @@ Requires Node 20.19+ or 22.12+ (Vite 8's engine requirement) and npm.
 npm install
 ```
 
+The API refuses to serve data until a passphrase exists, so create a `.dev.vars`
+file at the project root first (it is git-ignored):
+
+```
+SPENDOS_PASSPHRASE=your-long-household-passphrase
+```
+
 The app needs two processes: Vite for the client, and the Worker for the API.
 
 ```bash
@@ -97,7 +104,10 @@ npx wrangler dev --port 8787 --local --persist-to /tmp/spendos-d1
 
 | Method   | Path                     | Purpose                                       |
 | -------- | ------------------------ | --------------------------------------------- |
-| `GET`    | `/api/health`            | liveness check                                |
+| `GET`    | `/api/health`            | liveness check (the only data-free route)      |
+| `GET`    | `/api/session`           | is this browser signed in, and is auth set up  |
+| `POST`   | `/api/session`           | exchange the passphrase for a session cookie   |
+| `DELETE` | `/api/session`           | sign out and clear the cookie                  |
 | `GET`    | `/api/state`             | full snapshot: transactions, docs, settings…   |
 | `PUT`    | `/api/preferences`       | patch one or more settings fields              |
 | `POST`   | `/api/transactions`      | add one or many entries, skips duplicates       |
@@ -129,8 +139,24 @@ Requests pass through a hardening layer in `worker/index.ts`:
   download instead of rendering
 - API responses are `no-store`; the site sends `noindex` and `no-referrer`
 
-**There is no sign-in.** The Site link is the only access control, so anyone who
-has the URL can read and edit the ledger. Do not share it outside the household.
+### Passphrase gate
+
+Every API route except `/api/health` and `/api/session` requires a signed
+session cookie:
+
+- `POST /api/session` exchanges the household passphrase for an `HttpOnly`,
+  `SameSite=Strict` cookie (30 days, `Secure` over HTTPS). The token is an
+  HMAC-SHA256 signature over its expiry, keyed from the passphrase itself, so
+  rotating the passphrase invalidates every session already issued
+- the passphrase is compared in constant time and sign-in attempts are capped at
+  eight per five minutes per client, which makes guessing impractical
+- with no `SPENDOS_PASSPHRASE` configured the API fails closed — 503, never an
+  unauthenticated ledger
+
+The passphrase is a Worker secret: Sites → Secrets in a hosted environment, or
+`.dev.vars` for local development. There are no per-user accounts, only one
+shared passphrase for the household, so use a long one and rotate it by
+replacing the secret.
 
 ## Deployment
 
